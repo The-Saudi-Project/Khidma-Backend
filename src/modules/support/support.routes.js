@@ -8,6 +8,7 @@ const catchAsync = require('../../utils/catchAsync');
 const AppError = require('../../utils/AppError');
 const { protect, restrictTo } = require('../../middleware/auth');
 const validate = require('../../middleware/validate');
+const { assertOwnership } = require('../../utils/assertOwnership');
 
 /**
  * @desc   Create support ticket
@@ -69,8 +70,12 @@ const getTicket = catchAsync(async (req, res, next) => {
 
   if (!ticket) return next(new AppError('Ticket not found.', 404));
 
-  if (req.user.role !== 'admin' && ticket.submittedBy._id.toString() !== req.user._id.toString()) {
-    return next(new AppError('Access denied.', 403));
+  if (req.user.role !== 'admin') {
+    try {
+      assertOwnership(ticket, req.user._id, 'submittedBy');
+    } catch (e) {
+      return next(e);
+    }
   }
 
   return sendSuccess(res, 200, 'Ticket retrieved.', { ticket });
@@ -86,8 +91,12 @@ const replyToTicket = catchAsync(async (req, res, next) => {
   const ticket = await SupportTicket.findById(req.params.id);
   if (!ticket) return next(new AppError('Ticket not found.', 404));
 
-  if (req.user.role !== 'admin' && ticket.submittedBy.toString() !== req.user._id.toString()) {
-    return next(new AppError('Access denied.', 403));
+  if (req.user.role !== 'admin') {
+    try {
+      assertOwnership(ticket, req.user._id, 'submittedBy');
+    } catch (e) {
+      return next(e);
+    }
   }
 
   if (['resolved', 'closed'].includes(ticket.status)) {
@@ -103,8 +112,10 @@ const replyToTicket = catchAsync(async (req, res, next) => {
   // Update status
   if (req.user.role === 'admin') {
     ticket.status = 'waiting_customer';
-    // Notify ticket owner
-    await NotificationService.supportReply(ticket, ticket.submittedBy);
+    const ownerId = ticket.submittedBy?._id || ticket.submittedBy;
+    setImmediate(() => {
+      NotificationService.supportReply(ticket, ownerId);
+    });
   } else {
     ticket.status = 'in_progress';
   }

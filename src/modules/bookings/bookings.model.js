@@ -140,6 +140,9 @@ const bookingSchema = new mongoose.Schema({
   providerPaidAt: Date,
   payoutId: { type: mongoose.Schema.Types.ObjectId, ref: 'Payout', default: null },
 
+  providerAcceptedAt: { type: Date, default: null },
+  providerAcceptDeadline: { type: Date, default: null },
+
   // Timeline (immutable append-only log)
   timeline: [timelineEventSchema],
 
@@ -162,10 +165,22 @@ const bookingSchema = new mongoose.Schema({
 bookingSchema.index({ customer: 1, status: 1 });
 bookingSchema.index({ provider: 1, status: 1 });
 bookingSchema.index({ status: 1 });
-bookingSchema.index({ bookingNumber: 1 });
+
 bookingSchema.index({ scheduledDate: 1 });
 bookingSchema.index({ paymentDeadline: 1, status: 1 }); // For expiry cron
 bookingSchema.index({ service: 1 });
+
+bookingSchema.index(
+  { customer: 1, scheduledDate: 1, scheduledTime: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { status: { $nin: ['cancelled', 'expired'] } }
+  }
+);
+bookingSchema.index({ customer: 1, createdAt: -1 });
+bookingSchema.index({ provider: 1, scheduledDate: 1 });
+bookingSchema.index({ status: 1, paymentDeadline: 1 });
+bookingSchema.index({ status: 1, createdAt: -1 });
 
 /**
  * Auto-generate booking number before validation

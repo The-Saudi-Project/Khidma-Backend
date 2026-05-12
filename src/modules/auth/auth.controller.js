@@ -1,9 +1,15 @@
-const User = require('../users/users.model');
-const { generateAccessToken, generateRefreshToken, verifyRefreshToken, buildTokenPayload } = require('../../utils/jwt');
-const { sendSuccess, sendError } = require('../../utils/apiResponse');
-const catchAsync = require('../../utils/catchAsync');
-const AppError = require('../../utils/AppError');
-const AuditService = require('../audit/audit.service');
+const User = require('../users/users.model')
+const {
+  generateAccessToken,
+  generateRefreshToken,
+  verifyAndRotateRefreshToken,
+  revokeAllUserTokens,
+  buildTokenPayload
+} = require('../../utils/jwt')
+const { sendSuccess } = require('../../utils/apiResponse')
+const catchAsync = require('../../utils/catchAsync')
+const AppError = require('../../utils/AppError')
+const AuditService = require('../audit/audit.service')
 
 /**
  * @desc   Register new customer
@@ -11,12 +17,11 @@ const AuditService = require('../audit/audit.service');
  * @access Public
  */
 const signup = catchAsync(async (req, res, next) => {
-  const { name, email, password, phone } = req.body;
+  const { name, email, password, phone } = req.body
 
-  // Check existing user
-  const existing = await User.findOne({ email: email.toLowerCase() });
+  const existing = await User.findOne({ email: email.toLowerCase() })
   if (existing) {
-    return next(new AppError('An account with this email already exists.', 409));
+    return next(new AppError('An account with this email already exists.', 409))
   }
 
   const user = await User.create({
@@ -25,7 +30,7 @@ const signup = catchAsync(async (req, res, next) => {
     password,
     phone,
     role: 'customer'
-  });
+  })
 
   await AuditService.log({
     userId: user._id,
@@ -35,11 +40,11 @@ const signup = catchAsync(async (req, res, next) => {
     targetId: user._id,
     description: `New customer registered: ${user.email}`,
     req
-  });
+  })
 
-  const payload = buildTokenPayload(user);
-  const accessToken = generateAccessToken(payload);
-  const refreshToken = generateRefreshToken(payload);
+  const payload = buildTokenPayload(user)
+  const accessToken = generateAccessToken(user)
+  const refreshToken = await generateRefreshToken(payload, req)
 
   return sendSuccess(res, 201, 'Account created successfully.', {
     accessToken,
@@ -49,10 +54,11 @@ const signup = catchAsync(async (req, res, next) => {
       name: user.name,
       email: user.email,
       role: user.role,
-      phone: user.phone
+      phone: user.phone,
+      mustChangePassword: !!user.mustChangePassword
     }
-  });
-});
+  })
+})
 
 /**
  * @desc   Login
@@ -60,22 +66,20 @@ const signup = catchAsync(async (req, res, next) => {
  * @access Public
  */
 const login = catchAsync(async (req, res, next) => {
-  const { email, password } = req.body;
+  const { email, password } = req.body
 
-  // Include password field explicitly (select: false by default)
-  const user = await User.findOne({ email: email.toLowerCase() }).select('+password');
+  const user = await User.findOne({ email: email.toLowerCase() }).select('+password')
 
   if (!user || !(await user.comparePassword(password))) {
-    return next(new AppError('Invalid email or password.', 401));
+    return next(new AppError('Invalid email or password.', 401))
   }
 
   if (!user.isActive) {
-    return next(new AppError('Your account has been deactivated. Please contact support.', 403));
+    return next(new AppError('Your account has been deactivated. Please contact support.', 403))
   }
 
-  // Update last login
-  user.lastLoginAt = new Date();
-  await user.save({ validateBeforeSave: false });
+  user.lastLoginAt = new Date()
+  await user.save({ validateBeforeSave: false })
 
   await AuditService.log({
     userId: user._id,
@@ -85,11 +89,11 @@ const login = catchAsync(async (req, res, next) => {
     targetId: user._id,
     description: `User logged in: ${user.email}`,
     req
-  });
+  })
 
-  const payload = buildTokenPayload(user);
-  const accessToken = generateAccessToken(payload);
-  const refreshToken = generateRefreshToken(payload);
+  const payload = buildTokenPayload(user)
+  const accessToken = generateAccessToken(user)
+  const refreshToken = await generateRefreshToken(payload, req)
 
   return sendSuccess(res, 200, 'Login successful.', {
     accessToken,
@@ -101,10 +105,11 @@ const login = catchAsync(async (req, res, next) => {
       role: user.role,
       phone: user.phone,
       avatar: user.avatar,
+      mustChangePassword: !!user.mustChangePassword,
       providerProfile: user.role === 'provider' ? user.providerProfile : undefined
     }
-  });
-});
+  })
+})
 
 /**
  * @desc   Refresh access token
@@ -112,27 +117,28 @@ const login = catchAsync(async (req, res, next) => {
  * @access Public
  */
 const refresh = catchAsync(async (req, res, next) => {
-  const { refreshToken } = req.body;
-  if (!refreshToken) {
-    return next(new AppError('Refresh token is required.', 400));
+  const { refreshToken: rawRefresh } = req.body
+  if (!rawRefresh) {
+    return next(new AppError('Refresh token is required.', 400))
   }
 
-  const decoded = verifyRefreshToken(refreshToken);
-  const user = await User.findById(decoded.id);
-
-  if (!user || !user.isActive) {
-    return next(new AppError('User not found or inactive.', 401));
-  }
-
-  const payload = buildTokenPayload(user);
-  const newAccessToken = generateAccessToken(payload);
-  const newRefreshToken = generateRefreshToken(payload);
+  const { accessToken, refreshToken } = await verifyAndRotateRefreshToken(rawRefresh, req)
 
   return sendSuccess(res, 200, 'Token refreshed.', {
-    accessToken: newAccessToken,
-    refreshToken: newRefreshToken
-  });
-});
+    accessToken,
+    refreshToken
+  })
+})
+
+/**
+ * @desc   Logout — revoke refresh tokens and bump access token version
+ * @route  POST /api/auth/logout
+ * @access Private
+ */
+const logout = catchAsync(async (req, res) => {
+  await revokeAllUserTokens(req.user._id)
+  return sendSuccess(res, 200, 'Logged out successfully.')
+})
 
 /**
  * @desc   Get current user
@@ -140,9 +146,9 @@ const refresh = catchAsync(async (req, res, next) => {
  * @access Private
  */
 const getMe = catchAsync(async (req, res) => {
-  const user = await User.findById(req.user._id);
-  return sendSuccess(res, 200, 'Current user retrieved.', { user });
-});
+  const user = await User.findById(req.user._id)
+  return sendSuccess(res, 200, 'Current user retrieved.', { user })
+})
 
 /**
  * @desc   Request password reset
@@ -150,25 +156,22 @@ const getMe = catchAsync(async (req, res) => {
  * @access Public
  */
 const forgotPassword = catchAsync(async (req, res, next) => {
-  const { email } = req.body;
-  const user = await User.findOne({ email: email.toLowerCase() });
+  const { email } = req.body
+  const user = await User.findOne({ email: email.toLowerCase() })
 
-  // Always return success to prevent email enumeration
   if (!user) {
-    return sendSuccess(res, 200, 'If an account with that email exists, a reset link has been sent.');
+    return sendSuccess(res, 200, 'If an account with that email exists, a reset link has been sent.')
   }
 
-  const resetToken = user.createPasswordResetToken();
-  await user.save({ validateBeforeSave: false });
+  const resetToken = user.createPasswordResetToken()
+  await user.save({ validateBeforeSave: false })
 
-  // In production: send email with reset link
-  // For now: return token in response (development only)
-  const isDev = process.env.NODE_ENV === 'development';
+  const isDev = process.env.NODE_ENV === 'development'
 
   return sendSuccess(res, 200, 'If an account with that email exists, a reset link has been sent.', {
-    ...(isDev && { resetToken }) // Only expose in dev
-  });
-});
+    ...(isDev && { resetToken })
+  })
+})
 
 /**
  * @desc   Reset password with token
@@ -176,21 +179,23 @@ const forgotPassword = catchAsync(async (req, res, next) => {
  * @access Public
  */
 const resetPassword = catchAsync(async (req, res, next) => {
-  const { token, password } = req.body;
+  const { token, password } = req.body
 
   const user = await User.findOne({
     passwordResetToken: token,
     passwordResetExpires: { $gt: Date.now() }
-  });
+  })
 
   if (!user) {
-    return next(new AppError('Invalid or expired reset token.', 400));
+    return next(new AppError('Invalid or expired reset token.', 400))
   }
 
-  user.password = password;
-  user.passwordResetToken = undefined;
-  user.passwordResetExpires = undefined;
-  await user.save();
+  user.password = password
+  user.passwordResetToken = undefined
+  user.passwordResetExpires = undefined
+  await user.save()
+
+  await revokeAllUserTokens(user._id)
 
   await AuditService.log({
     userId: user._id,
@@ -200,10 +205,10 @@ const resetPassword = catchAsync(async (req, res, next) => {
     targetId: user._id,
     description: `Password reset for: ${user.email}`,
     req
-  });
+  })
 
-  return sendSuccess(res, 200, 'Password reset successful. Please log in.');
-});
+  return sendSuccess(res, 200, 'Password reset successful. Please log in.')
+})
 
 /**
  * @desc   Change password (authenticated)
@@ -211,16 +216,19 @@ const resetPassword = catchAsync(async (req, res, next) => {
  * @access Private
  */
 const changePassword = catchAsync(async (req, res, next) => {
-  const { currentPassword, newPassword } = req.body;
+  const { currentPassword, newPassword } = req.body
 
-  const user = await User.findById(req.user._id).select('+password');
+  const user = await User.findById(req.user._id).select('+password')
 
   if (!(await user.comparePassword(currentPassword))) {
-    return next(new AppError('Current password is incorrect.', 401));
+    return next(new AppError('Current password is incorrect.', 401))
   }
 
-  user.password = newPassword;
-  await user.save();
+  user.password = newPassword
+  user.mustChangePassword = false
+  await user.save()
+
+  await revokeAllUserTokens(user._id)
 
   await AuditService.log({
     userId: user._id,
@@ -230,13 +238,23 @@ const changePassword = catchAsync(async (req, res, next) => {
     targetId: user._id,
     description: `Password changed for: ${user.email}`,
     req
-  });
+  })
 
-  const payload = buildTokenPayload(user);
-  const accessToken = generateAccessToken(payload);
-  const refreshToken = generateRefreshToken(payload);
+  const fresh = await User.findById(user._id)
+  const payload = buildTokenPayload(fresh)
+  const accessToken = generateAccessToken(fresh)
+  const refreshToken = await generateRefreshToken(payload, req)
 
-  return sendSuccess(res, 200, 'Password changed successfully.', { accessToken, refreshToken });
-});
+  return sendSuccess(res, 200, 'Password changed successfully.', { accessToken, refreshToken })
+})
 
-module.exports = { signup, login, refresh, getMe, forgotPassword, resetPassword, changePassword };
+module.exports = {
+  signup,
+  login,
+  refresh,
+  logout,
+  getMe,
+  forgotPassword,
+  resetPassword,
+  changePassword
+}

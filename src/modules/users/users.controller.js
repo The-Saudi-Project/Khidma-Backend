@@ -1,8 +1,11 @@
 const User = require('./users.model');
+const Booking = require('../bookings/bookings.model');
 const { sendSuccess, sendError, getPaginationMeta } = require('../../utils/apiResponse');
 const catchAsync = require('../../utils/catchAsync');
 const AppError = require('../../utils/AppError');
 const AuditService = require('../audit/audit.service');
+const { revokeAllUserTokens } = require('../../utils/jwt');
+const { scoreProviders } = require('../../utils/dispatchScorer');
 
 /**
  * @desc   Get current user profile
@@ -219,6 +222,10 @@ const toggleUserStatus = catchAsync(async (req, res, next) => {
   user.isActive = !user.isActive;
   await user.save({ validateBeforeSave: false });
 
+  if (!user.isActive) {
+    await revokeAllUserTokens(user._id);
+  }
+
   await AuditService.log({
     userId: req.user._id,
     userRole: 'admin',
@@ -240,7 +247,7 @@ const toggleUserStatus = catchAsync(async (req, res, next) => {
  * @access Admin
  */
 const getProviders = catchAsync(async (req, res) => {
-  const { isAvailable, isActive = true } = req.query;
+  const { isAvailable, isActive = true, serviceCategory, city } = req.query;
 
   const filter = { role: 'provider', isActive: isActive !== 'false' };
   if (isAvailable !== undefined) {
@@ -248,10 +255,68 @@ const getProviders = catchAsync(async (req, res) => {
   }
 
   const providers = await User.find(filter)
-    .select('name email phone providerProfile.isAvailable providerProfile.averageRating providerProfile.completedJobs providerProfile.skills isActive')
+    .select(
+      'name email phone providerProfile.isAvailable providerProfile.averageRating providerProfile.completedJobs providerProfile.skills providerProfile.serviceCity providerProfile.lastJobAt isActive'
+    )
     .sort({ 'providerProfile.averageRating': -1 });
 
+  if (serviceCategory) {
+    const scored = scoreProviders(providers, { serviceCategory, city });
+    const out = scored.map(({ user, score }) => {
+      const o = user.toObject ? user.toObject() : user;
+      o.score = score === Number.NEGATIVE_INFINITY ? null : Math.round(score * 100) / 100;
+      return o;
+    });
+    return sendSuccess(res, 200, 'Providers retrieved.', { providers: out });
+  }
+
   return sendSuccess(res, 200, 'Providers retrieved.', { providers });
+});
+
+/**
+ * @desc   Provider performance stats (admin)
+ * @route  GET /api/users/providers/:id/stats
+ * @access Admin
+ */
+const getProviderStats = catchAsync(async (req, res, next) => {
+  const providerId = req.params.id;
+  const provider = await User.findOne({ _id: providerId, role: 'provider' });
+  if (!provider) return next(new AppError('Provider not found.', 404));
+
+  const [totalAssigned, completed, cancelled, earningAgg, byCategory, recentJobs] = await Promise.all([
+    Booking.countDocuments({ provider: providerId }),
+    Booking.countDocuments({ provider: providerId, status: 'completed' }),
+    Booking.countDocuments({ provider: providerId, status: 'cancelled' }),
+    Booking.aggregate([
+      { $match: { provider: provider._id, status: 'completed' } },
+      { $group: { _id: null, sum: { $sum: '$providerEarning' } } }
+    ]),
+    Booking.aggregate([
+      { $match: { provider: provider._id } },
+      { $group: { _id: '$serviceCategory', count: { $sum: 1 } } }
+    ]),
+    Booking.find({ provider: providerId })
+      .sort({ createdAt: -1 })
+      .limit(10)
+      .select('bookingNumber serviceName serviceCategory status totalAmount providerEarning scheduledDate createdAt')
+  ]);
+
+  const sumEarn = earningAgg[0]?.sum || 0;
+  const completionRate = completed / Math.max(totalAssigned, 1);
+  const avgEarningPerJob = completed ? Math.round((sumEarn / completed) * 100) / 100 : 0;
+
+  return sendSuccess(res, 200, 'Provider stats retrieved.', {
+    provider,
+    stats: {
+      totalAssigned,
+      completed,
+      cancelled,
+      completionRate: Math.round(completionRate * 10000) / 10000,
+      avgEarningPerJob,
+      jobsByCategory: byCategory,
+      recentJobs
+    }
+  });
 });
 
 /**
@@ -279,5 +344,6 @@ module.exports = {
   createProvider,
   toggleUserStatus,
   getProviders,
+  getProviderStats,
   updateAvailability
 };

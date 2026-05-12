@@ -12,11 +12,12 @@ const fs = require('fs');
  * @access Public
  */
 const getServices = catchAsync(async (req, res) => {
-  const { category, search, sortBy = 'sortOrder', page = 1, limit = 20 } = req.query;
+  const { category, search, sector, sortBy = 'sortOrder', page = 1, limit = 20 } = req.query;
 
   const filter = { isActive: true };
   if (category) filter.category = { $regex: category, $options: 'i' };
   if (search) filter.$text = { $search: search };
+  if (sector) filter.sector = sector;
 
   const sortMap = {
     price_asc: { price: 1 },
@@ -34,7 +35,7 @@ const getServices = catchAsync(async (req, res) => {
   ]);
 
   // Get distinct categories
-  const categories = await Service.distinct('category', { isActive: true });
+  const categories = await Service.distinct('category', { isActive: true, ...(sector && { sector }) });
 
   return sendSuccess(res, 200, 'Services retrieved.', { services, categories },
     getPaginationMeta(total, page, limit));

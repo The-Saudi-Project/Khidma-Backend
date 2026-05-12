@@ -4,12 +4,13 @@ const router = express.Router();
 const ctrl = require('./payments.controller');
 const { protect, restrictTo } = require('../../middleware/auth');
 const validate = require('../../middleware/validate');
-const { upload } = require('../../config/upload');
+const { upload, validateAndSanitizeUpload } = require('../../config/upload');
+const { uploadLimiter } = require('../../middleware/rateLimits');
 
 router.use(protect);
 
-router.post('/bookings/:bookingId/upload', restrictTo('customer'),
-  upload.single('proofFile'), ctrl.uploadPaymentProof);
+router.post('/bookings/:bookingId/upload', restrictTo('customer'), uploadLimiter,
+  upload.single('proofFile'), validateAndSanitizeUpload, ctrl.uploadPaymentProof);
 
 router.get('/', restrictTo('admin'), ctrl.getAllPayments);
 router.get('/:paymentId', ctrl.getPayment);

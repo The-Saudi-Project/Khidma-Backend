@@ -59,6 +59,8 @@ const paymentSchema = new mongoose.Schema({
 paymentSchema.index({ booking: 1 });
 paymentSchema.index({ customer: 1 });
 paymentSchema.index({ status: 1 });
+paymentSchema.index({ status: 1, createdAt: -1 });
+paymentSchema.index({ booking: 1, status: 1 });
 
 const Payment = mongoose.model('Payment', paymentSchema);
 

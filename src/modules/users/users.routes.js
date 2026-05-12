@@ -36,6 +36,7 @@ router.patch('/providers/availability', restrictTo('provider'), [
 
 // Admin routes
 router.get('/', restrictTo('admin'), ctrl.getAllUsers);
+router.get('/providers/:id/stats', restrictTo('admin'), ctrl.getProviderStats);
 router.get('/providers', restrictTo('admin'), ctrl.getProviders);
 router.post('/providers', restrictTo('admin'), [
   body('name').trim().notEmpty(),

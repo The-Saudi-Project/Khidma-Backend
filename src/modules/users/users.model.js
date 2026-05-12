@@ -65,14 +65,19 @@ const userSchema = new mongoose.Schema({
   // Customer-specific
   addresses: [addressSchema],
 
+  accessTokenVersion: { type: Number, default: 0 },
+  mustChangePassword: { type: Boolean, default: false },
+
   // Provider-specific
   providerProfile: {
     skills: [String],
+    serviceCity: { type: String, trim: true },
     serviceCategories: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Service' }],
     isAvailable: { type: Boolean, default: true },
     averageRating: { type: Number, default: 0, min: 0, max: 5 },
     totalReviews: { type: Number, default: 0 },
     completedJobs: { type: Number, default: 0 },
+    lastJobAt: { type: Date, default: null },
     // Earnings tracking
     totalEarned: { type: Number, default: 0 },
     pendingEarnings: { type: Number, default: 0 },
@@ -114,7 +119,8 @@ userSchema.index({ 'providerProfile.isAvailable': 1 })
  */
 userSchema.pre('save', async function (next) {
   if (!this.isModified('password')) return next();
-  this.password = await bcrypt.hash(this.password, 12);
+  const rounds = parseInt(process.env.BCRYPT_ROUNDS, 10) || 12
+  this.password = await bcrypt.hash(this.password, rounds);
   if (!this.isNew) {
     this.passwordChangedAt = new Date(Date.now() - 1000); // 1s grace period
   }

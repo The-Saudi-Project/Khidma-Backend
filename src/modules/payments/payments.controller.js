@@ -6,8 +6,17 @@ const AuditService = require('../audit/audit.service');
 const { sendSuccess, getPaginationMeta } = require('../../utils/apiResponse');
 const catchAsync = require('../../utils/catchAsync');
 const AppError = require('../../utils/AppError');
+const { assertOwnership } = require('../../utils/assertOwnership');
+const bookingEmitter = require('../bookings/bookings.events');
 const path = require('path');
 const fs = require('fs');
+
+function emitBookingUpdate(booking) {
+  bookingEmitter.emit(`booking:${booking._id.toString()}`, {
+    status: booking.status,
+    timeline: booking.timeline
+  });
+}
 
 /**
  * @desc   Upload payment proof
@@ -22,8 +31,10 @@ const uploadPaymentProof = catchAsync(async (req, res, next) => {
   const booking = await Booking.findById(req.params.bookingId);
   if (!booking) return next(new AppError('Booking not found.', 404));
 
-  if (booking.customer.toString() !== req.user._id.toString()) {
-    return next(new AppError('Access denied.', 403));
+  try {
+    assertOwnership(booking, req.user._id, 'customer');
+  } catch (e) {
+    return next(e);
   }
 
   if (!['pending_payment', 'payment_uploaded'].includes(booking.status)) {
@@ -69,10 +80,15 @@ const uploadPaymentProof = catchAsync(async (req, res, next) => {
   booking.status = 'payment_uploaded';
   booking.addTimelineEvent('payment_uploaded', 'Payment proof uploaded by customer.', req.user._id, 'customer');
   await booking.save();
+  emitBookingUpdate(booking);
 
   // Notify admins
   const admins = await User.find({ role: 'admin', isActive: true }).select('_id');
-  await Promise.all(admins.map(admin => NotificationService.paymentUploaded(booking, admin._id)));
+  admins.forEach((admin) => {
+    setImmediate(() => {
+      NotificationService.paymentUploaded(booking, admin._id);
+    });
+  });
 
   await AuditService.log({
     userId: req.user._id,
@@ -109,8 +125,12 @@ const confirmPayment = catchAsync(async (req, res, next) => {
   booking.status = 'payment_confirmed';
   booking.addTimelineEvent('payment_confirmed', 'Payment confirmed by admin.', req.user._id, 'admin');
   await booking.save();
+  emitBookingUpdate(booking);
 
-  await NotificationService.paymentConfirmed(booking, booking.customer);
+  const custId = booking.customer._id || booking.customer;
+  setImmediate(() => {
+    NotificationService.paymentConfirmed(booking, custId);
+  });
 
   await AuditService.log({
     userId: req.user._id,
@@ -146,6 +166,7 @@ const rejectPayment = catchAsync(async (req, res, next) => {
   booking.paymentId = null;
   booking.addTimelineEvent('payment_rejected', `Payment rejected: ${reason}`, req.user._id, 'admin');
   await booking.save();
+  emitBookingUpdate(booking);
 
   await AuditService.log({
     userId: req.user._id,
@@ -172,9 +193,12 @@ const getPayment = catchAsync(async (req, res, next) => {
 
   if (!payment) return next(new AppError('Payment not found.', 404));
 
-  // Access control
-  if (req.user.role === 'customer' && payment.customer._id.toString() !== req.user._id.toString()) {
-    return next(new AppError('Access denied.', 403));
+  if (req.user.role === 'customer') {
+    try {
+      assertOwnership(payment, req.user._id, 'customer');
+    } catch (e) {
+      return next(e);
+    }
   }
 
   return sendSuccess(res, 200, 'Payment retrieved.', { payment });

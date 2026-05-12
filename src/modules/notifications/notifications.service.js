@@ -1,18 +1,10 @@
-const Notification = require('./notifications.model');
-const logger = require('../../config/logger');
+const Notification = require('./notifications.model')
+const { queueNotification } = require('../../jobs/notificationQueue')
 
-/**
- * Central notification service
- * All notification creation flows through here for consistency
- */
 const NotificationService = {
-
-  /**
-   * Create a single notification
-   */
   async create({ recipientId, type, title, message, refModel = null, refId = null, actionUrl = null }) {
-    try {
-      const notification = await Notification.create({
+    return queueNotification(async () => {
+      await Notification.create({
         recipient: recipientId,
         type,
         title,
@@ -20,18 +12,10 @@ const NotificationService = {
         refModel,
         refId,
         actionUrl
-      });
-      return notification;
-    } catch (err) {
-      logger.error(`Failed to create notification: ${err.message}`);
-      // Non-fatal — don't throw, just log
-      return null;
-    }
+      })
+    })
   },
 
-  /**
-   * Notify on booking created (customer confirmation)
-   */
   async bookingCreated(booking, customerId) {
     return this.create({
       recipientId: customerId,
@@ -41,12 +25,9 @@ const NotificationService = {
       refModel: 'Booking',
       refId: booking._id,
       actionUrl: `/bookings/${booking._id}`
-    });
+    })
   },
 
-  /**
-   * Notify admin when payment proof uploaded
-   */
   async paymentUploaded(booking, adminId) {
     return this.create({
       recipientId: adminId,
@@ -56,12 +37,9 @@ const NotificationService = {
       refModel: 'Booking',
       refId: booking._id,
       actionUrl: `/admin/bookings/${booking._id}`
-    });
+    })
   },
 
-  /**
-   * Notify customer when payment confirmed
-   */
   async paymentConfirmed(booking, customerId) {
     return this.create({
       recipientId: customerId,
@@ -71,12 +49,9 @@ const NotificationService = {
       refModel: 'Booking',
       refId: booking._id,
       actionUrl: `/bookings/${booking._id}`
-    });
+    })
   },
 
-  /**
-   * Notify provider when assigned to booking
-   */
   async providerAssigned(booking, providerId, customerId) {
     const providerNotif = this.create({
       recipientId: providerId,
@@ -86,7 +61,7 @@ const NotificationService = {
       refModel: 'Booking',
       refId: booking._id,
       actionUrl: `/provider/jobs/${booking._id}`
-    });
+    })
 
     const customerNotif = this.create({
       recipientId: customerId,
@@ -96,14 +71,23 @@ const NotificationService = {
       refModel: 'Booking',
       refId: booking._id,
       actionUrl: `/bookings/${booking._id}`
-    });
+    })
 
-    return Promise.all([providerNotif, customerNotif]);
+    return Promise.all([providerNotif, customerNotif])
   },
 
-  /**
-   * Notify customer when job started
-   */
+  async providerAccepted(booking, customerId) {
+    return this.create({
+      recipientId: customerId,
+      type: 'provider_accepted',
+      title: 'Provider Accepted',
+      message: `Your provider has accepted booking #${booking.bookingNumber} and will arrive as scheduled.`,
+      refModel: 'Booking',
+      refId: booking._id,
+      actionUrl: `/bookings/${booking._id}`
+    })
+  },
+
   async jobStarted(booking, customerId) {
     return this.create({
       recipientId: customerId,
@@ -113,12 +97,9 @@ const NotificationService = {
       refModel: 'Booking',
       refId: booking._id,
       actionUrl: `/bookings/${booking._id}`
-    });
+    })
   },
 
-  /**
-   * Notify customer when job completed
-   */
   async jobCompleted(booking, customerId) {
     return this.create({
       recipientId: customerId,
@@ -128,12 +109,9 @@ const NotificationService = {
       refModel: 'Booking',
       refId: booking._id,
       actionUrl: `/bookings/${booking._id}`
-    });
+    })
   },
 
-  /**
-   * Notify on cancellation
-   */
   async bookingCancelled(booking, recipientId, reason) {
     return this.create({
       recipientId,
@@ -143,12 +121,9 @@ const NotificationService = {
       refModel: 'Booking',
       refId: booking._id,
       actionUrl: `/bookings/${booking._id}`
-    });
+    })
   },
 
-  /**
-   * Notify provider on payout
-   */
   async payoutProcessed(payout, providerId) {
     return this.create({
       recipientId: providerId,
@@ -158,12 +133,9 @@ const NotificationService = {
       refModel: 'Payout',
       refId: payout._id,
       actionUrl: `/provider/payouts`
-    });
+    })
   },
 
-  /**
-   * Support ticket reply notification
-   */
   async supportReply(ticket, recipientId) {
     return this.create({
       recipientId,
@@ -173,8 +145,8 @@ const NotificationService = {
       refModel: 'SupportTicket',
       refId: ticket._id,
       actionUrl: `/support/${ticket._id}`
-    });
+    })
   }
-};
+}
 
-module.exports = NotificationService;
+module.exports = NotificationService

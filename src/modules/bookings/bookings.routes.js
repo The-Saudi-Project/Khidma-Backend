@@ -4,6 +4,7 @@ const router = express.Router();
 const ctrl = require('./bookings.controller');
 const { protect, restrictTo } = require('../../middleware/auth');
 const validate = require('../../middleware/validate');
+const { bookingCreateLimiter } = require('../../middleware/rateLimits');
 
 router.use(protect);
 
@@ -11,7 +12,7 @@ router.use(protect);
 router.get('/admin/metrics', restrictTo('admin'), ctrl.getAdminMetrics);
 
 // Customer routes
-router.post('/', restrictTo('customer'), [
+router.post('/', restrictTo('customer'), bookingCreateLimiter, [
   body('serviceId').isMongoId().withMessage('Valid service ID required'),
   body('scheduledDate').isISO8601().withMessage('Valid date required'),
   body('scheduledTime').notEmpty().withMessage('Time is required'),
@@ -33,7 +34,9 @@ router.patch('/:id/assign-provider', restrictTo('admin'), [
   validate
 ], ctrl.assignProvider);
 
-// Shared routes
+// Shared routes (specific paths before generic :id)
+router.get('/:id/events', ctrl.streamBookingEvents);
+router.patch('/:id/accept', restrictTo('provider'), ctrl.acceptBookingJob);
 router.get('/:id', ctrl.getBooking);
 router.patch('/:id/cancel', [
   body('reason').optional().isLength({ max: 500 }),

@@ -29,6 +29,8 @@ router.post('/refresh', [
 
 router.get('/me', protect, ctrl.getMe);
 
+router.post('/logout', protect, ctrl.logout);
+
 router.post('/forgot-password', [
   body('email').isEmail().withMessage('Valid email is required').normalizeEmail(),
   validate

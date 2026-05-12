@@ -20,15 +20,16 @@ const auditLogSchema = new mongoose.Schema({
   description: { type: String, required: true },
   metadata: mongoose.Schema.Types.Mixed,
   ipAddress: String,
-  userAgent: String
+  userAgent: String,
+  chainHash: { type: String }
 }, {
   timestamps: true
 });
 
-auditLogSchema.index({ performedBy: 1 });
 auditLogSchema.index({ action: 1 });
 auditLogSchema.index({ targetModel: 1, targetId: 1 });
 auditLogSchema.index({ createdAt: -1 });
+auditLogSchema.index({ performedBy: 1, createdAt: -1 });
 
 const AuditLog = mongoose.model('AuditLog', auditLogSchema);
 module.exports = AuditLog;

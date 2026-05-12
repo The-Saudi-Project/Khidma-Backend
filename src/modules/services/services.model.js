@@ -16,7 +16,7 @@ const serviceSchema = new mongoose.Schema({
     type: String,
     lowercase: true,
     trim: true,
-    sparse: true  // allows multiple null values without unique conflict
+
   },
   description: {
     type: String,
@@ -55,6 +55,11 @@ const serviceSchema = new mongoose.Schema({
     default: null
   },
   features: [String],
+  sector: {
+    type: String,
+    enum: ['residential', 'commercial', 'industrial'],
+    default: 'residential'
+  },
   isActive: {
     type: Boolean,
     default: true

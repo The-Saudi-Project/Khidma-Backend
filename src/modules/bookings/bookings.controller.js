@@ -1,11 +1,22 @@
 const Booking = require('./bookings.model');
 const Service = require('../services/services.model');
 const User = require('../users/users.model');
+const ProviderInterest = require('../providers/providerInterest.model');
 const NotificationService = require('../notifications/notifications.service');
 const AuditService = require('../audit/audit.service');
+const LedgerService = require('../ledger/ledger.service');
 const { sendSuccess, getPaginationMeta } = require('../../utils/apiResponse');
 const catchAsync = require('../../utils/catchAsync');
 const AppError = require('../../utils/AppError');
+const { assertOwnership, assertBookingAccess } = require('../../utils/assertOwnership');
+const bookingEmitter = require('./bookings.events');
+
+function emitBookingUpdate(booking) {
+  bookingEmitter.emit(`booking:${booking._id.toString()}`, {
+    status: booking.status,
+    timeline: booking.timeline
+  });
+}
 
 /**
  * @desc   Create booking
@@ -50,19 +61,25 @@ const createBooking = catchAsync(async (req, res, next) => {
     return next(new AppError('You already have a booking at this date and time.', 409));
   }
 
-  // Create booking with financial snapshot
-  const booking = await Booking.create({
-    customer: req.user._id,
-    service: service._id,
-    serviceName: service.name,
-    serviceCategory: service.category,
-    servicePrice: service.price,
-    scheduledDate: new Date(scheduledDate),
-    scheduledTime,
-    address,
-    notes,
-    // providerEarning and platformCommission calculated in pre-save hook
-  });
+  let booking;
+  try {
+    booking = await Booking.create({
+      customer: req.user._id,
+      service: service._id,
+      serviceName: service.name,
+      serviceCategory: service.category,
+      servicePrice: service.price,
+      scheduledDate: new Date(scheduledDate),
+      scheduledTime,
+      address,
+      notes
+    });
+  } catch (err) {
+    if (err.code === 11000) {
+      return next(new AppError('You already have a booking at this date and time.', 409));
+    }
+    throw err;
+  }
 
   // Add initial timeline event
   booking.addTimelineEvent(
@@ -72,12 +89,14 @@ const createBooking = catchAsync(async (req, res, next) => {
     'customer'
   );
   await booking.save();
+  emitBookingUpdate(booking);
 
   // Update service booking count
   await Service.findByIdAndUpdate(serviceId, { $inc: { totalBookings: 1 } });
 
-  // Send notification
-  await NotificationService.bookingCreated(booking, req.user._id);
+  setImmediate(() => {
+    NotificationService.bookingCreated(booking, req.user._id);
+  });
 
   await AuditService.log({
     userId: req.user._id,
@@ -131,13 +150,10 @@ const getBooking = catchAsync(async (req, res, next) => {
 
   if (!booking) return next(new AppError('Booking not found.', 404));
 
-  // Access control: customer can only see their own, provider can only see assigned
-  const user = req.user;
-  if (user.role === 'customer' && booking.customer._id.toString() !== user._id.toString()) {
-    return next(new AppError('Access denied.', 403));
-  }
-  if (user.role === 'provider' && booking.provider?._id.toString() !== user._id.toString()) {
-    return next(new AppError('Access denied.', 403));
+  try {
+    assertBookingAccess(booking, req.user);
+  } catch (e) {
+    return next(e);
   }
 
   return sendSuccess(res, 200, 'Booking retrieved.', { booking });
@@ -154,12 +170,15 @@ const cancelBooking = catchAsync(async (req, res, next) => {
 
   const user = req.user;
 
-  // Authorization
+  if (user.role === 'provider') {
+    return next(new AppError('Access denied.', 403));
+  }
   if (user.role === 'customer') {
-    if (booking.customer.toString() !== user._id.toString()) {
-      return next(new AppError('Access denied.', 403));
+    try {
+      assertOwnership(booking, user._id, 'customer');
+    } catch (e) {
+      return next(e);
     }
-    // Customers can only cancel before provider is assigned
     if (['provider_assigned', 'in_progress', 'completed'].includes(booking.status)) {
       return next(new AppError('Cannot cancel booking at this stage. Please contact support.', 400));
     }
@@ -177,16 +196,21 @@ const cancelBooking = catchAsync(async (req, res, next) => {
   booking.cancelledAt = new Date();
   booking.addTimelineEvent('cancelled', `Booking cancelled${reason ? `: ${reason}` : ''}`, user._id, user.role);
   await booking.save();
+  emitBookingUpdate(booking);
 
   // Notify affected parties
   const customerId = booking.customer.toString();
   const providerId = booking.provider?.toString();
 
   if (user.role !== 'customer') {
-    await NotificationService.bookingCancelled(booking, customerId, reason);
+    setImmediate(() => {
+      NotificationService.bookingCancelled(booking, customerId, reason);
+    });
   }
   if (providerId && user.role !== 'provider') {
-    await NotificationService.bookingCancelled(booking, providerId, reason);
+    setImmediate(() => {
+      NotificationService.bookingCancelled(booking, providerId, reason);
+    });
   }
 
   await AuditService.log({
@@ -212,8 +236,10 @@ const rescheduleBooking = catchAsync(async (req, res, next) => {
   const booking = await Booking.findById(req.params.id);
   if (!booking) return next(new AppError('Booking not found.', 404));
 
-  if (booking.customer.toString() !== req.user._id.toString()) {
-    return next(new AppError('Access denied.', 403));
+  try {
+    assertOwnership(booking, req.user._id, 'customer');
+  } catch (e) {
+    return next(e);
   }
 
   if (['in_progress', 'completed', 'cancelled', 'expired'].includes(booking.status)) {
@@ -230,6 +256,7 @@ const rescheduleBooking = catchAsync(async (req, res, next) => {
   booking.scheduledDate = new Date(scheduledDate);
   booking.scheduledTime = scheduledTime;
   await booking.save();
+  emitBookingUpdate(booking);
 
   return sendSuccess(res, 200, 'Booking rescheduled.', { booking });
 });
@@ -280,8 +307,12 @@ const startJob = catchAsync(async (req, res, next) => {
   booking.status = 'in_progress';
   booking.addTimelineEvent('in_progress', 'Provider has started the job.', req.user._id, 'provider');
   await booking.save();
+  emitBookingUpdate(booking);
 
-  await NotificationService.jobStarted(booking, booking.customer);
+  const custId = booking.customer._id || booking.customer;
+  setImmediate(() => {
+    NotificationService.jobStarted(booking, custId);
+  });
 
   return sendSuccess(res, 200, 'Job started.', { booking });
 });
@@ -306,16 +337,20 @@ const completeJob = catchAsync(async (req, res, next) => {
   booking.status = 'completed';
   booking.addTimelineEvent('completed', 'Job completed by provider.', req.user._id, 'provider');
   await booking.save();
+  emitBookingUpdate(booking);
 
-  // Update provider stats
   await User.findByIdAndUpdate(req.user._id, {
-    $inc: {
-      'providerProfile.completedJobs': 1,
-      'providerProfile.pendingEarnings': booking.providerEarning
-    }
+    $inc: { 'providerProfile.completedJobs': 1 },
+    $set: { 'providerProfile.lastJobAt': new Date() }
   });
 
-  await NotificationService.jobCompleted(booking, booking.customer);
+  const custId = booking.customer._id || booking.customer;
+  setImmediate(() => {
+    NotificationService.jobCompleted(booking, custId);
+  });
+  setImmediate(() => {
+    LedgerService.recordJobCompletion(booking);
+  });
 
   await AuditService.log({
     userId: req.user._id,
@@ -377,43 +412,81 @@ const getAllBookings = catchAsync(async (req, res) => {
 const assignProvider = catchAsync(async (req, res, next) => {
   const { providerId } = req.body;
 
-  const [booking, provider] = await Promise.all([
-    Booking.findById(req.params.id),
-    User.findOne({ _id: providerId, role: 'provider', isActive: true })
-  ]);
-
+  const booking = await Booking.findById(req.params.id);
   if (!booking) return next(new AppError('Booking not found.', 404));
+
+  const provider = await User.findOne({ _id: providerId, role: 'provider', isActive: true });
   if (!provider) return next(new AppError('Provider not found or inactive.', 404));
 
   if (booking.status !== 'payment_confirmed') {
     return next(new AppError('Provider can only be assigned after payment is confirmed.', 400));
   }
 
-  const previousProvider = booking.provider;
-  booking.provider = providerId;
-  booking.status = 'provider_assigned';
-  booking.addTimelineEvent(
-    'provider_assigned',
-    `Provider ${provider.name} assigned by admin.`,
-    req.user._id,
-    'admin'
-  );
-  await booking.save();
+  const conflict = await Booking.findOne({
+    provider: providerId,
+    scheduledDate: booking.scheduledDate,
+    scheduledTime: booking.scheduledTime,
+    status: { $in: ['provider_assigned', 'in_progress'] },
+    _id: { $ne: booking._id }
+  });
+  if (conflict) {
+    return next(new AppError(`Provider already has booking #${conflict.bookingNumber} at this time.`, 409));
+  }
 
-  await NotificationService.providerAssigned(booking, providerId, booking.customer);
+  const previousProvider = booking.provider;
+  const deadlineMins = parseInt(process.env.PROVIDER_ACCEPT_DEADLINE_MINUTES, 10) || 30;
+  const providerAcceptDeadline = new Date(Date.now() + deadlineMins * 60 * 1000);
+
+  const updated = await Booking.findOneAndUpdate(
+    { _id: req.params.id, provider: null, status: 'payment_confirmed' },
+    {
+      $set: {
+        provider: providerId,
+        status: 'provider_assigned',
+        providerAcceptDeadline,
+        providerAcceptedAt: null
+      },
+      $push: {
+        timeline: {
+          status: 'provider_assigned',
+          description: `Provider ${provider.name} assigned by admin.`,
+          performedBy: req.user._id,
+          performedByRole: 'admin',
+          timestamp: new Date()
+        }
+      }
+    },
+    { new: true }
+  )
+    .populate('service', 'name category image description')
+    .populate('customer', 'name email phone')
+    .populate('provider', 'name email phone providerProfile.averageRating')
+    .populate('paymentId')
+    .populate('reviewId');
+
+  if (!updated) {
+    return next(new AppError('Booking was already assigned or status has changed.', 409));
+  }
+
+  emitBookingUpdate(updated);
+
+  const custId = updated.customer._id || updated.customer;
+  setImmediate(() => {
+    NotificationService.providerAssigned(updated, providerId, custId);
+  });
 
   await AuditService.log({
     userId: req.user._id,
     userRole: 'admin',
     action: 'booking.provider_assigned',
     targetModel: 'Booking',
-    targetId: booking._id,
-    description: `Provider ${provider.name} assigned to booking ${booking.bookingNumber}`,
+    targetId: updated._id,
+    description: `Provider ${provider.name} assigned to booking ${updated.bookingNumber}`,
     metadata: { providerId, previousProvider },
     req
   });
 
-  return sendSuccess(res, 200, 'Provider assigned.', { booking });
+  return sendSuccess(res, 200, 'Provider assigned.', { booking: updated });
 });
 
 /**
@@ -454,6 +527,12 @@ const getAdminMetrics = catchAsync(async (req, res) => {
 
   const revenue = revenueAgg[0] || { totalRevenue: 0, platformRevenue: 0, providerPayouts: 0 };
 
+  const [pendingPaymentReview, pendingProviderAssignment, pendingApplications] = await Promise.all([
+    Booking.countDocuments({ status: 'payment_uploaded' }),
+    Booking.countDocuments({ status: 'payment_confirmed' }),
+    ProviderInterest.countDocuments({ status: 'pending' })
+  ]);
+
   return sendSuccess(res, 200, 'Metrics retrieved.', {
     metrics: {
       totalBookings,
@@ -461,9 +540,70 @@ const getAdminMetrics = catchAsync(async (req, res) => {
       completedBookings,
       cancelledBookings,
       pendingBookings: await Booking.countDocuments({ status: 'pending_payment' }),
+      pendingPaymentReview,
+      pendingProviderAssignment,
+      pendingApplications,
       ...revenue
     },
     recentBookings
+  });
+});
+
+/**
+ * @desc   Provider accepts assigned job
+ * @route  PATCH /api/bookings/:id/accept
+ * @access Provider
+ */
+const acceptBookingJob = catchAsync(async (req, res, next) => {
+  const booking = await Booking.findById(req.params.id);
+  if (!booking) return next(new AppError('Booking not found.', 404));
+  if (booking.provider?.toString() !== req.user._id.toString()) {
+    return next(new AppError('Access denied.', 403));
+  }
+  if (booking.status !== 'provider_assigned') {
+    return next(new AppError('Job cannot be accepted at this stage.', 400));
+  }
+
+  booking.providerAcceptedAt = new Date();
+  booking.addTimelineEvent('provider_accepted', 'Provider accepted the job.', req.user._id, 'provider');
+  await booking.save();
+  emitBookingUpdate(booking);
+
+  const custId = booking.customer._id || booking.customer;
+  setImmediate(() => {
+    NotificationService.providerAccepted(booking, custId);
+  });
+
+  return sendSuccess(res, 200, 'Job accepted.', { booking });
+});
+
+/**
+ * @desc   SSE stream for booking status (access_token query for EventSource)
+ * @route  GET /api/bookings/:id/events
+ * @access Private
+ */
+const streamBookingEvents = catchAsync(async (req, res, next) => {
+  const booking = await Booking.findById(req.params.id);
+  if (!booking) return next(new AppError('Booking not found.', 404));
+  try {
+    assertBookingAccess(booking, req.user);
+  } catch (e) {
+    return next(e);
+  }
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  if (typeof res.flushHeaders === 'function') res.flushHeaders();
+
+  const channel = `booking:${booking._id.toString()}`;
+  const send = (data) => {
+    res.write(`data: ${JSON.stringify(data)}\n\n`);
+  };
+  send({ type: 'connected' });
+  bookingEmitter.on(channel, send);
+  req.on('close', () => {
+    bookingEmitter.off(channel, send);
   });
 });
 
@@ -476,6 +616,8 @@ module.exports = {
   getProviderJobs,
   startJob,
   completeJob,
+  acceptBookingJob,
+  streamBookingEvents,
   getAllBookings,
   assignProvider,
   getAdminMetrics

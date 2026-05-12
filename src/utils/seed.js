@@ -125,7 +125,8 @@ const seed = async () => {
         password: process.env.ADMIN_PASSWORD || 'Admin@123456',
         role: 'admin',
         isActive: true,
-        isEmailVerified: true
+        isEmailVerified: true,
+        mustChangePassword: process.env.ADMIN_MUST_CHANGE_PASSWORD === 'true'
       });
       console.log(`✅ Admin created: ${admin.email}`);
     } else {

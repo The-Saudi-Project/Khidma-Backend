@@ -3,6 +3,7 @@ const Booking = require('../bookings/bookings.model');
 const User = require('../users/users.model');
 const NotificationService = require('../notifications/notifications.service');
 const AuditService = require('../audit/audit.service');
+const LedgerService = require('../ledger/ledger.service');
 const { sendSuccess, getPaginationMeta } = require('../../utils/apiResponse');
 const catchAsync = require('../../utils/catchAsync');
 const AppError = require('../../utils/AppError');
@@ -14,6 +15,7 @@ const AppError = require('../../utils/AppError');
  */
 const getProviderEarnings = catchAsync(async (req, res) => {
   const user = await User.findById(req.user._id).select('providerProfile name email');
+  const balance = await LedgerService.getProviderBalance(req.user._id);
 
   // Get completed unpaid bookings
   const pendingBookings = await Booking.find({
@@ -24,6 +26,7 @@ const getProviderEarnings = catchAsync(async (req, res) => {
 
   return sendSuccess(res, 200, 'Earnings retrieved.', {
     summary: {
+      balance,
       totalEarned: user.providerProfile.totalEarned,
       pendingEarnings: user.providerProfile.pendingEarnings,
       totalPaidOut: user.providerProfile.totalPaidOut
@@ -62,7 +65,15 @@ const getProviderBalances = catchAsync(async (req, res) => {
   const providers = await User.find({ role: 'provider', isActive: true })
     .select('name email phone providerProfile.pendingEarnings providerProfile.totalEarned providerProfile.totalPaidOut');
 
-  return sendSuccess(res, 200, 'Provider balances retrieved.', { providers });
+  const withBalance = await Promise.all(
+    providers.map(async (p) => {
+      const o = p.toObject();
+      o.ledgerBalance = await LedgerService.getProviderBalance(p._id);
+      return o;
+    })
+  );
+
+  return sendSuccess(res, 200, 'Provider balances retrieved.', { providers: withBalance });
 });
 
 /**
@@ -110,16 +121,11 @@ const processPayout = catchAsync(async (req, res, next) => {
     { isProviderPaid: true, providerPaidAt: new Date(), payoutId: payout._id }
   );
 
-  // Update provider earnings
-  await User.findByIdAndUpdate(providerId, {
-    $inc: {
-      'providerProfile.totalEarned': totalAmount,
-      'providerProfile.totalPaidOut': totalAmount,
-      'providerProfile.pendingEarnings': -totalAmount
-    }
-  });
+  await LedgerService.recordPayout(payout);
 
-  await NotificationService.payoutProcessed(payout, providerId);
+  setImmediate(() => {
+    NotificationService.payoutProcessed(payout, providerId);
+  });
 
   await AuditService.log({
     userId: req.user._id,

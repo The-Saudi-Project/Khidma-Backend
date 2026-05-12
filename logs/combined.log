@@ -1,2 +1,42 @@
 {"level":"info","message":"🚀 Khidma API running on port 5000 in development mode","timestamp":"2026-03-16 22:51:38"}
 {"level":"info","message":"✅ MongoDB connected: localhost","timestamp":"2026-03-16 22:51:38"}
+{"level":"info","message":"🚀 Khidma API running on port 5000 in development mode","timestamp":"2026-05-11 23:21:58"}
+{"level":"info","message":"✅ MongoDB connected: localhost","timestamp":"2026-05-11 23:21:58"}
+{"level":"info","message":"🚀 Khidma API running on port 5000 in development mode","timestamp":"2026-05-11 23:22:29"}
+{"level":"info","message":"✅ MongoDB connected: localhost","timestamp":"2026-05-11 23:22:29"}
+{"level":"info","message":"✅ MongoDB connected: localhost","timestamp":"2026-05-12 19:47:06"}
+{"level":"info","message":"Booking expiry scheduler started (5m interval)","timestamp":"2026-05-12 19:47:06"}
+{"level":"info","message":"Khidma API running on port 5000 in development mode","timestamp":"2026-05-12 19:47:06"}
+{"level":"info","message":"✅ MongoDB connected: localhost","timestamp":"2026-05-12 19:51:47"}
+{"level":"info","message":"Booking expiry scheduler started (5m interval)","timestamp":"2026-05-12 19:51:47"}
+{"level":"info","message":"Khidma API running on port 5000 in development mode","timestamp":"2026-05-12 19:51:47"}
+{"level":"info","message":"✅ MongoDB connected: localhost","timestamp":"2026-05-12 19:52:08"}
+{"level":"info","message":"Booking expiry scheduler started (5m interval)","timestamp":"2026-05-12 19:52:08"}
+{"level":"info","message":"Khidma API running on port 5000 in development mode","timestamp":"2026-05-12 19:52:08"}
+{"level":"info","message":"✅ MongoDB connected: localhost","timestamp":"2026-05-12 19:52:14"}
+{"level":"info","message":"Booking expiry scheduler started (5m interval)","timestamp":"2026-05-12 19:52:14"}
+{"level":"info","message":"Khidma API running on port 5000 in development mode","timestamp":"2026-05-12 19:52:14"}
+{"level":"info","message":"✅ MongoDB connected: localhost","timestamp":"2026-05-12 19:52:20"}
+{"level":"info","message":"Booking expiry scheduler started (5m interval)","timestamp":"2026-05-12 19:52:20"}
+{"level":"info","message":"Khidma API running on port 5000 in development mode","timestamp":"2026-05-12 19:52:20"}
+{"level":"info","message":"✅ MongoDB connected: localhost","timestamp":"2026-05-12 19:52:25"}
+{"level":"info","message":"Booking expiry scheduler started (5m interval)","timestamp":"2026-05-12 19:52:25"}
+{"level":"info","message":"Khidma API running on port 5000 in development mode","timestamp":"2026-05-12 19:52:25"}
+{"level":"info","message":"✅ MongoDB connected: localhost","timestamp":"2026-05-12 20:18:46"}
+{"level":"info","message":"Booking expiry scheduler started (5m interval)","timestamp":"2026-05-12 20:18:46"}
+{"level":"info","message":"Khidma API running on port 5000 in development mode","timestamp":"2026-05-12 20:18:46"}
+{"ip":"::1","level":"error","message":"An account with this email already exists.","method":"POST","path":"/api/auth/signup","stack":"Error: An account with this email already exists.\n    at C:\\Users\\JARVIS\\Desktop\\REVAMPS\\khidma\\backend\\src\\modules\\auth\\auth.controller.js:24:17\n    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)","statusCode":409,"timestamp":"2026-05-12 20:24:56"}
+{"level":"info","message":"✅ MongoDB connected: localhost","timestamp":"2026-05-12 21:32:19"}
+{"level":"info","message":"✅ MongoDB connected: localhost","timestamp":"2026-05-12 21:32:22"}
+{"level":"info","message":"Booking expiry scheduler started (5m interval)","timestamp":"2026-05-12 21:32:22"}
+{"level":"info","message":"Khidma API running on port 5000 in development mode","timestamp":"2026-05-12 21:32:22"}
+{"level":"info","message":"✅ MongoDB connected: localhost","timestamp":"2026-05-12 21:41:37"}
+{"level":"info","message":"Booking expiry scheduler started (5m interval)","timestamp":"2026-05-12 21:41:37"}
+{"level":"info","message":"Khidma API running on port 5000 in development mode","timestamp":"2026-05-12 21:41:37"}
+{"level":"info","message":"✅ MongoDB connected: localhost","timestamp":"2026-05-12 21:44:11"}
+{"level":"info","message":"Booking expiry scheduler started (5m interval)","timestamp":"2026-05-12 21:44:11"}
+{"level":"info","message":"Khidma API running on port 5000 in development mode","timestamp":"2026-05-12 21:44:11"}
+{"level":"info","message":"✅ MongoDB connected: localhost","timestamp":"2026-05-12 21:44:20"}
+{"level":"info","message":"✅ MongoDB connected: localhost","timestamp":"2026-05-12 21:44:32"}
+{"level":"info","message":"Booking expiry scheduler started (5m interval)","timestamp":"2026-05-12 21:44:32"}
+{"level":"info","message":"Khidma API running on port 5000 in development mode","timestamp":"2026-05-12 21:44:32"}
