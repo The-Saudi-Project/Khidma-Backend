@@ -29,8 +29,8 @@ const providerInterestRoutes = require('./modules/providers/providerInterest.rou
 
 const app = express()
 
-// Trust proxy headers from Render/Vercel load balancers (required for rate limiting & security)
-app.set('trust proxy', true)
+// Trust exactly 1 proxy hop (Render's load balancer)
+app.set('trust proxy', 1)
 
 // CORS: allowed origins from ALLOWED_ORIGINS env (comma-separated) or FRONTEND_URL fallback
 const parseOrigins = () => {
