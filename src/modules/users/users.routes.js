@@ -25,7 +25,12 @@ router.post('/addresses', restrictTo('customer'), [
   body('label').optional().isLength({ max: 50 }),
   validate
 ], ctrl.addAddress);
-router.put('/addresses/:addressId', restrictTo('customer'), ctrl.updateAddress);
+router.put('/addresses/:addressId', restrictTo('customer'), [
+  body('fullAddress').optional().notEmpty().withMessage('Full address cannot be empty'),
+  body('city').optional().notEmpty().withMessage('City cannot be empty'),
+  body('label').optional().isLength({ max: 50 }),
+  validate
+], ctrl.updateAddress);
 router.delete('/addresses/:addressId', restrictTo('customer'), ctrl.deleteAddress);
 
 // Provider availability

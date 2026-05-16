@@ -12,20 +12,24 @@ function startExpiryScheduler() {
         paymentDeadline: { $lt: now }
       })
 
-      let n = 0
-      for (const booking of expired) {
-        booking.status = 'expired'
-        booking.addTimelineEvent(
-          'expired',
-          'Booking expired — payment not received before deadline.',
-          null,
-          'system'
+      if (expired.length > 0) {
+        const ids = expired.map(b => b._id)
+        
+        await Booking.updateMany(
+          { _id: { $in: ids } },
+          { 
+            $set: { status: 'expired' },
+            $push: {
+              timeline: {
+                status: 'expired',
+                description: 'Booking expired — payment not received before deadline.',
+                timestamp: now,
+                actorModel: 'system'
+              }
+            }
+          }
         )
-        await booking.save()
-        n++
-      }
-      if (n > 0) {
-        logger.info(`Booking expiry run: marked ${n} booking(s) expired`)
+        logger.info(`Booking expiry run: marked ${expired.length} booking(s) expired`)
       }
     } catch (err) {
       logger.error(`Booking expiry scheduler error: ${err.message}`)

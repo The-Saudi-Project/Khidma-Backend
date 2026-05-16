@@ -21,7 +21,14 @@ router.post('/', protect, restrictTo('admin'), serviceUpload.single('image'), [
   validate
 ], ctrl.createService);
 
-router.put('/:id', protect, restrictTo('admin'), serviceUpload.single('image'), ctrl.updateService);
+router.put('/:id', protect, restrictTo('admin'), serviceUpload.single('image'), [
+  body('name').optional().trim().notEmpty().withMessage('Service name cannot be empty'),
+  body('description').optional().trim().notEmpty().withMessage('Description cannot be empty'),
+  body('category').optional().trim().notEmpty().withMessage('Category cannot be empty'),
+  body('price').optional().isFloat({ min: 0 }).withMessage('Valid price is required'),
+  body('priceType').optional().isIn(['fixed', 'hourly', 'starting_from']),
+  validate
+], ctrl.updateService);
 router.delete('/:id', protect, restrictTo('admin'), ctrl.deleteService);
 
 module.exports = router;

@@ -1,28 +1,34 @@
 const multer = require('multer')
+const { v2: cloudinary } = require('cloudinary')
+const { CloudinaryStorage } = require('multer-storage-cloudinary')
 const path = require('path')
-const fs = require('fs')
-const { v4: uuidv4 } = require('uuid')
-const FileType = require('file-type')
-const sharp = require('sharp')
 const AppError = require('../utils/AppError')
 const catchAsync = require('../utils/catchAsync')
 
-const ensureDir = (dir) => {
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true })
-  }
-}
+// Configure Cloudinary
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET
+})
 
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    const uploadPath = path.join(__dirname, '../uploads/payments')
-    ensureDir(uploadPath)
-    cb(null, uploadPath)
-  },
-  filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname).toLowerCase()
-    const uniqueName = `payment_${uuidv4()}${ext}`
-    cb(null, uniqueName)
+// Storage for Payment Proofs
+const paymentStorage = new CloudinaryStorage({
+  cloudinary: cloudinary,
+  params: {
+    folder: 'khidma/payments',
+    allowed_formats: ['jpg', 'png', 'jpeg', 'pdf'],
+    public_id: (req, file) => `payment_${Date.now()}`
+  }
+})
+
+// Storage for Services Images
+const serviceStorage = new CloudinaryStorage({
+  cloudinary: cloudinary,
+  params: {
+    folder: 'khidma/services',
+    allowed_formats: ['jpg', 'png', 'jpeg', 'webp'],
+    public_id: (req, file) => `service_${Date.now()}`
   }
 })
 
@@ -37,69 +43,6 @@ const fileFilter = (req, file, cb) => {
   cb(new AppError('Only images (JPG, PNG) and PDF files are allowed', 400), false)
 }
 
-const upload = multer({
-  storage,
-  limits: {
-    fileSize: parseInt(process.env.MAX_FILE_SIZE, 10) || 5 * 1024 * 1024
-  },
-  fileFilter
-})
-
-/**
- * After multer: verify magic bytes, strip non-images, re-encode images with sharp.
- */
-const validateAndSanitizeUpload = catchAsync(async (req, res, next) => {
-  if (!req.file) return next()
-
-  const filePath = req.file.path
-  const ft = await FileType.fromFile(filePath)
-
-  const allowed = ['image/jpeg', 'image/png', 'application/pdf']
-  if (!ft || !allowed.includes(ft.mime)) {
-    try {
-      fs.unlinkSync(filePath)
-    } catch (_) {}
-    return next(new AppError('Invalid file type.', 400))
-  }
-
-  if (ft.mime === 'application/pdf') {
-    req.file.mimetype = ft.mime
-    return next()
-  }
-
-  const dir = path.dirname(filePath)
-  const base = path.basename(filePath, path.extname(filePath))
-  const sanitizedPath = path.join(dir, `${base}.jpg`)
-
-  await sharp(filePath).jpeg({ quality: 90 }).toFile(sanitizedPath)
-
-  if (sanitizedPath !== filePath) {
-    try {
-      fs.unlinkSync(filePath)
-    } catch (_) {}
-  }
-
-  req.file.path = sanitizedPath
-  req.file.filename = `${base}.jpg`
-  req.file.mimetype = 'image/jpeg'
-  req.file.size = fs.statSync(sanitizedPath).size
-
-  next()
-})
-
-const serviceImageStorage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    const uploadPath = path.join(__dirname, '../uploads/services')
-    ensureDir(uploadPath)
-    cb(null, uploadPath)
-  },
-  filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname).toLowerCase()
-    const uniqueName = `service_${uuidv4()}${ext}`
-    cb(null, uniqueName)
-  }
-})
-
 const serviceImageFilter = (req, file, cb) => {
   const allowedTypes = /jpeg|jpg|png|webp/
   const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase())
@@ -111,10 +54,25 @@ const serviceImageFilter = (req, file, cb) => {
   cb(new AppError('Only image files (JPG, PNG, WebP) are allowed', 400), false)
 }
 
+const upload = multer({
+  storage: paymentStorage,
+  limits: {
+    fileSize: parseInt(process.env.MAX_FILE_SIZE, 10) || 5 * 1024 * 1024
+  },
+  fileFilter
+})
+
 const serviceUpload = multer({
-  storage: serviceImageStorage,
+  storage: serviceStorage,
   limits: { fileSize: 5 * 1024 * 1024 },
   fileFilter: serviceImageFilter
+})
+
+// Validate and sanitize - just passthrough now since Cloudinary handles it
+const validateAndSanitizeUpload = catchAsync(async (req, res, next) => {
+  if (!req.file) return next()
+  // Cloudinary URL is in req.file.path
+  next()
 })
 
 module.exports = { upload, serviceUpload, validateAndSanitizeUpload }

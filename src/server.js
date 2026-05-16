@@ -48,7 +48,6 @@ app.use(cors({
     if (!origin || allowed.includes(origin)) return cb(null, true)
     return cb(null, false)
   },
-  credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
 }))

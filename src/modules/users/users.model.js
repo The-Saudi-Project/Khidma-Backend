@@ -150,9 +150,15 @@ userSchema.methods.changedPasswordAfter = function (JWTTimestamp) {
  */
 userSchema.methods.createPasswordResetToken = function () {
   const { v4: uuidv4 } = require('uuid');
+  const crypto = require('crypto');
   const resetToken = uuidv4();
-  // In production, hash this before storing
-  this.passwordResetToken = resetToken;
+  
+  // Hash the token before storing
+  this.passwordResetToken = crypto
+    .createHash('sha256')
+    .update(resetToken)
+    .digest('hex');
+    
   this.passwordResetExpires = Date.now() + 30 * 60 * 1000; // 30 minutes
   return resetToken;
 };
